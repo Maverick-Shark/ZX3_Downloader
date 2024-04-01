@@ -902,10 +902,13 @@ def chk_mra_cache(d_mra_db: dict[str, Any], d_cores_db: dict[str, Any],
                         if not s_tagitem in d_mras:
                             d_mras[s_tagitem] = []
                         d_mras[s_tagitem].append(s_name)
+                        s_url:str  = s_baseurl + s_name
+                        if 'url' in d_files[s_file]:
+                            s_url = d_files[s_file]['url']
                         b_ok = chk_or_obtain(os.path.join(s_mras_path, s_name),
                                              d_files[s_file]['hash'],
                                              d_files[s_file]['size'],
-                                             s_baseurl + s_name,
+                                             s_url,
                                              b_force=b_force)
                         if not b_ok:
                             print(f'{s_name} Bad file!')
