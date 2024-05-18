@@ -10,6 +10,7 @@ SPDX-License-Identifier: BSD-2-Clause
 """
 
 from __future__ import print_function
+from __future__ import annotations
 from typing import Any
 import logging
 import sys
@@ -29,7 +30,7 @@ import shutil
 from subprocess import run, CompletedProcess
 import time
 
-__MY_VERSION__ = '1.1.0'
+__MY_VERSION__ = '1.2.0'
 
 MY_BASEPATH: str = os.path.dirname(sys.argv[0])
 MY_DIRPATH: str = os.path.abspath(MY_BASEPATH)
@@ -42,8 +43,8 @@ LOG_STREAM = logging.StreamHandler(sys.stdout)
 LOG_STREAM.setFormatter(LOG_FORMAT)
 LOGGER.addHandler(LOG_STREAM)
 
-if sys.version_info < (3, 9, 0):
-    LOGGER.error('This software requires Python version 3.9 or greater')
+if sys.version_info < (3, 7, 0):
+    LOGGER.error('This software requires Python version 3.7 or greater')
     sys.exit(1)
 
 ssl._create_default_https_context = ssl._create_unverified_context  # pylint: disable=protected-access
@@ -522,7 +523,8 @@ def build_sd_files_fromdb(s_path: str, d_db_params: dict[str, Any],
 
     LOGGER.debug('Checking Files Cache for %s...', s_json_db)
     chk_files_cache(d_files_db, d_params['kinds'], d_params['types'],
-                    d_params['tags'], s_files_path, b_force)
+                    d_params['mist_mode'], d_params['tags'], s_files_path,
+                    b_force)
 
     LOGGER.debug('Copying Files for SD...')
     b_ok = build_sd_files(d_files_db, d_params['kinds'], d_params['types'],
@@ -556,6 +558,10 @@ def build_sd_fromzip(d_zip_bd: dict[str, Any], l_kinds: list[str],
     b_ok = False
     d_zip_files: dict[str, Any] = d_zip_bd['files']
     d_tags: dict[str, Any] = d_zip_bd.get('tag_dictionary', {})
+
+    if b_mist and s_out_subpath == 'cores':
+        b_ok = build_zxt_sd_fromzip(d_zip_files, s_zip_path, s_out_path,
+                                    'mist')
     for s_orig in d_zip_files:
         s_kind = d_zip_files[s_orig].get('kind', '')
         s_type: str = d_zip_files[s_orig].get('type', '')
@@ -599,6 +605,71 @@ def build_sd_fromzip(d_zip_bd: dict[str, Any], l_kinds: list[str],
                                  i_size,
                                  s_zip_path=s_zip_path,
                                  s_orig=s_orig)
+
+    return b_ok
+
+
+def build_zxt_sd_fromzip(d_zip_files: dict[str, Any], s_zip_path: str,
+                         s_out_path: str, s_out_subpath: str) -> bool:
+    """
+    Tries to build ZXT core files for SD from ZIP file
+    :param d_zip_files: Dictionary with all the ZIP files to extract
+    :param s_zip_path: Full path to ZIP file containing original files
+    :param s_out_path: Path where the files are to be copied
+    :param s_out_subpath: Subpath of s_out_path to copy the core files into
+    :return: True if files are built correctly
+    """
+    b_ok: bool = True
+    s_kind = ''
+
+    d_zxt: dict[str, dict[str, str]] = {}
+    for s_file in d_zip_files:
+        s_name: str = d_zip_files[s_file].get('file', '')
+        s_kind: str = d_zip_files[s_file].get('kind', '')
+        s_type: str = d_zip_files[s_file].get('type', '')
+        if s_type == 'bit':
+            s_zxtname: str = s_name.replace(s_kind, '').replace('__', '_')
+            s_zxtname = s_zxtname.replace('_.', '.')
+            if not s_zxtname in d_zxt:
+                d_zxt[s_zxtname] = {}
+            d_zxt[s_zxtname][s_kind] = s_file
+
+    for s_core, d_bitfiles in d_zxt.items():
+        if s_kind and s_kind in d_bitfiles and len(d_bitfiles) == 3:
+            arr_bitfiles: list[str] = []
+            for z_kind in ['a35t', 'a100t', 'a200t']:
+                s_file: str = d_bitfiles.get(z_kind, '')
+                arr_bitfiles.append(s_file)
+
+            if len(arr_bitfiles) == 3:
+                s_name: str = s_core.replace('.bit', '')
+                s_sdpath = os.path.join(s_out_path, s_out_subpath)
+                if not os.path.isdir(s_sdpath):
+                    pathlib.Path(s_sdpath).mkdir(parents=True, exist_ok=True)
+                s_sdpath: str = os.path.join(s_sdpath, f'{s_name}.zxt')
+
+                arr_tmp: list[str] = []
+                for s_orig in arr_bitfiles:
+                    s_dest: str = f'{s_sdpath}_{s_orig}_tmp'
+                    s_hash: str = d_zip_files[s_orig]['hash']
+                    i_size: int = d_zip_files[s_orig]['size']
+                    b_tok: bool = chk_or_obtain(s_dest,
+                                                s_hash,
+                                                i_size,
+                                                s_zip_path=s_zip_path,
+                                                s_orig=s_orig)
+                    if b_tok:
+                        arr_tmp.append(s_dest)
+                if len(arr_tmp) == 3:
+                    build_zxt_file(arr_tmp, s_sdpath)
+                else:
+                    b_ok = False
+
+                for s_orig in arr_bitfiles:
+                    s_dest = f'{s_sdpath}_{s_orig}_tmp'
+                    if os.path.isfile(s_dest):
+                        os.remove(s_dest)
+                        del d_zip_files[s_orig]
 
     return b_ok
 
@@ -713,14 +784,15 @@ def chk_zip_cache(d_arcade_db: dict[str, Any], d_cores_db: dict[str, Any],
 
 
 def chk_files_cache(d_files_db: dict[str, Any], l_kind: list[str],
-                    l_type: list[str], l_tags: list[str], s_files_path: str,
-                    b_force: bool):
+                    l_type: list[str], b_mist: bool, l_tags: list[str],
+                    s_files_path: str, b_force: bool):
     """
     Populates files disk cache, checking the existing ones and downloading when
     needed
     :param d_files_db: Dict with files DB
     :param l_kind: List of kind of core files to populate/check (e.g. a200t)
     :param l_type: List of type of core files (e.g. bit, zx3)
+    :param b_mist: True if mist mode is active
     :param l_tags: List with tags that apply
     :param s_files_path: Path for the files cache
     :param b_force: If True, delete (if exists) and download again
@@ -729,6 +801,9 @@ def chk_files_cache(d_files_db: dict[str, Any], l_kind: list[str],
 
     d_files: dict[str, Any] = d_files_db.get('files', {})
     d_tags: dict[str, Any] = d_files_db.get('tag_dictionary', {})
+
+    if b_mist:
+        l_kind = ['a35t', 'a100t', 'a200t']
 
     for s_file in d_files:
         s_name: str = s_file.split('/')[-1]
@@ -800,6 +875,9 @@ def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
 
     d_files: dict[str, Any] = d_files_db['files']
     d_tags: dict[str, Any] = d_files_db.get('tag_dictionary', {})
+
+    if b_mist and s_out_subpath == 'cores' and 'bit' in l_types:
+        b_ok = build_zxt_sd_files(d_files, s_files_path, s_out_path, 'mist')
     for s_file in d_files:
         s_name: str = s_file.split('/')[-1]
         s_kind: str = d_files[s_file].get('kind', '')
@@ -807,6 +885,8 @@ def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
         s_sdpath: str = os.path.join(s_out_path, s_out_subpath)
         if b_mist and s_out_subpath == 'cores' and s_type == 'bit':
             s_sdpath = os.path.join(s_out_path, 'mist')
+
+        s_orig: str = ''
         if d_tags:
             if s_kind in l_kinds and s_type in l_types:  # Fully tagged item, copy if tag matches
                 if b_typegroups and not (b_mist and s_type == 'bit'):
@@ -814,45 +894,23 @@ def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
                 for i_item in d_files[s_file]['tags']:
                     for j_item in d_tags:
                         if d_tags[j_item] == i_item and j_item in l_tags:
-                            s_destpath: str = s_sdpath
                             if b_taggroups:
-                                s_destpath = os.path.join(s_destpath, j_item)
+                                s_sdpath = os.path.join(s_sdpath, j_item)
+                            s_orig = os.path.join(s_files_path, s_name)
 
-                            s_orig: str = os.path.join(s_files_path, s_name)
-                            s_dest: str = os.path.join(s_destpath, s_name)
-                            LOGGER.debug('Copy %s to %s...', s_orig, s_dest)
-                            if not os.path.isdir(s_destpath):
-                                pathlib.Path(s_destpath).mkdir(parents=True,
-                                                               exist_ok=True)
-                            try:
-                                shutil.copyfile(s_orig, s_dest)
-                            except OSError as err:
-                                LOGGER.error(err)
-                                b_ok = False
             elif not s_kind:  # Partially tagged item?
                 for i_item in d_files[s_file]['tags']:
                     for j_item in d_tags:
                         if d_tags[j_item] == i_item and j_item in l_tags:
-                            s_destpath: str = s_sdpath
                             l_subpath: list[str] = d_files[s_file].get(
                                 "path", [])
                             s_orig: str = s_files_path
                             if l_subpath:
                                 s_orig = os.path.join(s_orig,
                                                       os.path.join(*l_subpath))
-                                s_destpath = os.path.join(
-                                    s_destpath, os.path.join(*l_subpath))
+                                s_sdpath = os.path.join(
+                                    s_sdpath, os.path.join(*l_subpath))
                             s_orig = os.path.join(s_orig, s_name)
-                            s_dest = os.path.join(s_destpath, s_name)
-                            LOGGER.debug('Copy %s to %s...', s_orig, s_dest)
-                            if not os.path.isdir(s_destpath):
-                                pathlib.Path(s_destpath).mkdir(parents=True,
-                                                               exist_ok=True)
-                            try:
-                                shutil.copyfile(s_orig, s_dest)
-                            except OSError as err:
-                                LOGGER.error(err)
-                                b_ok = False
 
         else:  # No tags, always copy
             s_orig_subpath: str = s_files_path
@@ -861,8 +919,9 @@ def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
                 s_orig_subpath = os.path.join(s_orig_subpath,
                                               os.path.join(*l_origsubpath))
                 s_sdpath = os.path.join(s_sdpath, os.path.join(*l_origsubpath))
+            s_orig = os.path.join(s_orig_subpath, s_name)
 
-            s_orig: str = os.path.join(s_orig_subpath, s_name)
+        if s_orig:
             s_dest: str = os.path.join(s_sdpath, s_name)
             LOGGER.debug('Copy %s to %s...', s_orig, s_dest)
             if not os.path.isdir(s_sdpath):
@@ -872,6 +931,53 @@ def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
             except OSError as err:
                 LOGGER.error(err)
                 b_ok = False
+
+    return b_ok
+
+
+def build_zxt_sd_files(d_files: dict[str, Any], s_files_path: str,
+                       s_out_path: str, s_out_subpath: str) -> bool:
+    """
+    Tries to build ZXT for SD after downloading individual files
+    :param d_files_db: Database with all the files information
+    :param s_files_path: Path where the original files are
+    :param s_out_path: Path where the files are to be copied
+    :param s_out_subpath: Subpath of s_out_path to copy the files into
+    """
+    b_ok: bool = False
+    s_kind = ''
+
+    d_zxt: dict[str, dict[str, str]] = {}
+    for s_file in d_files:
+        s_name: str = s_file.split('/')[-1]
+        s_kind: str = d_files[s_file].get('kind', '')
+        if d_files[s_file].get('type', '') == 'bit':
+            s_zxtname: str = s_name.replace(s_kind, '').replace('__', '_')
+            s_zxtname = s_zxtname.replace('_.', '.')
+            if not s_zxtname in d_zxt:
+                d_zxt[s_zxtname] = {}
+            d_zxt[s_zxtname][s_kind] = s_file
+
+    for s_core, d_bitfiles in d_zxt.items():
+        if s_kind and s_kind in d_bitfiles and len(d_bitfiles) == 3:
+            arr_bitfiles: list[str] = []
+            for z_kind in ['a35t', 'a100t', 'a200t']:
+                s_file: str = d_bitfiles[z_kind]
+                if s_file:
+                    if z_kind in d_bitfiles:
+                        del d_files[s_file]
+                    s_file = os.path.join(s_files_path, s_file)
+                    arr_bitfiles.append(s_file)
+
+            if len(arr_bitfiles) == 3:
+                s_name: str = s_core.replace('.bit', '')
+
+                s_sdpath = os.path.join(s_out_path, s_out_subpath)
+                if not os.path.isdir(s_sdpath):
+                    pathlib.Path(s_sdpath).mkdir(parents=True, exist_ok=True)
+                s_sdpath: str = os.path.join(s_sdpath, f'{s_name}.zxt')
+                build_zxt_file(arr_bitfiles, s_sdpath)
+                b_ok = True
 
     return b_ok
 
@@ -902,7 +1008,7 @@ def chk_mra_cache(d_mra_db: dict[str, Any], d_cores_db: dict[str, Any],
                         if not s_tagitem in d_mras:
                             d_mras[s_tagitem] = []
                         d_mras[s_tagitem].append(s_name)
-                        s_url:str  = s_baseurl + s_name
+                        s_url: str = s_baseurl + s_name
                         if 'url' in d_files[s_file]:
                             s_url = d_files[s_file]['url']
                         b_ok = chk_or_obtain(os.path.join(s_mras_path, s_name),
@@ -914,6 +1020,49 @@ def chk_mra_cache(d_mra_db: dict[str, Any], d_cores_db: dict[str, Any],
                             print(f'{s_name} Bad file!')
 
     return d_mras
+
+
+def build_zxt_file(bit_files: list[str], zxt_file: str):
+    """
+    Join up to three bit files to a ZXT 
+    :param bit_files: Path to to three bit files [a35, a100, a200]
+    :param zxt_file: New ZXT file to create
+    """
+
+    LOGGER.debug('Join %s into %s...', bit_files, zxt_file)
+
+    b_data: bytes = b'MJ\x01\x00'  # ZXT file begings with these magic bytes
+    b_filedata: bytes = b''  # Temporary storage for .bit files data
+
+    i_offset: int = 512  # First 512 bytes of ZXT are reserved
+    for str_file in bit_files:
+        i_size: int = 0
+        i_padding: int = 0
+        if str_file:
+            i_size = os.stat(str_file).st_size
+            # Calculate padding to 512 bytes
+            i_padding = i_size % 512
+            if i_padding:
+                i_padding = 512 - i_padding
+
+        b_offset: bytes = int(0).to_bytes(4, 'little')  # Offset binary data
+        if i_size:
+            b_offset = i_offset.to_bytes(4, 'little')
+            # LOGGER.debug(i_offset, b_offset)
+            i_offset += i_size + i_padding  # Increase offset with data size
+
+            with open(str_file, 'rb') as in_zxdata:
+                b_tempdata: bytes = in_zxdata.read()
+                b_filedata += b_tempdata  # Store bit data
+                b_filedata += b'\x00' * i_padding  # Pad data to 512 bytes
+        b_data += b_offset  # Store offset
+
+    b_data += b'\x00' * 496  # Pad header with zeros up to 512 bytes
+    b_data += b_filedata  # Store bit binary data
+
+    with open(zxt_file, 'wb') as out_zxdata:
+        out_zxdata.write(b_data)
+        LOGGER.debug('%s created OK.', zxt_file)
 
 
 def build_arc_files(d_mras: dict[str, Any], d_cores_db: dict[str, Any],
