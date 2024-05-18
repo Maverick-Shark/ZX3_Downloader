@@ -25,7 +25,7 @@ These are the main features:
 - Uses multiple sources to obtain download information
 - Downloads ZIP, MRA, BIT, ZX3, etc. files from the sources in the obtained metadata
 - Downloads (if needed) [mra tool](https://github.com/kounch/mra-tools-c/tree/master/release) for the current OS (Mac, Windows or Linux)
-- Builds the SD structure
+- Builds the SD structure (including assembling ZXT files from BIT files when possible - in Mist mode -)
 
 ### Optional Software Requirements
 
@@ -92,7 +92,7 @@ Sus características principales son:
 - Utiliza múltiples fuentes para obtener información de descarga
 - Descarga archivos ZIP, MRA, BIT, ZX3, etc. de las fuentes de los metadatos obtenidos
 - Descarga (si fuera necesario) la [herramienta mra](https://github.com/kounch/mra-tools-c/tree/master/release) para el sistema operativo utilizado (Mac, Windows o Linux)
-- Construye la estructura de archivos para la SD
+- Construye la estructura de archivos para la SD (incluyendo la creación, cuando sea posible, de ficheros ZXT desde BIT - si se activa el modo Mist -)
 
 ### Software opcionalmente necesario
 

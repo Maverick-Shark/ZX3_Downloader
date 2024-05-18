@@ -28,7 +28,7 @@ from checkers import (chk_files_cache, chk_zip_cache, chk_mra_cache,
                       chk_or_download_autoboot)
 from utils import chk_or_obtain
 
-__MY_VERSION__ = '1.2.0'
+__MY_VERSION__ = '1.1.0'
 
 MY_BASEPATH: str = os.path.dirname(sys.argv[0])
 MY_DIRPATH: str = os.path.abspath(MY_BASEPATH)
