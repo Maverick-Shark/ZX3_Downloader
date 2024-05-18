@@ -14,34 +14,30 @@ from __future__ import annotations
 from typing import Any
 import logging
 import sys
-import platform
 import argparse
 import pathlib
 import os
 import json
-import hashlib
 import ssl
 from zipfile import ZipFile, is_zipfile
-import urllib.request
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse, quote, unquote, urljoin, ParseResult
+from urllib.parse import urljoin
 import socket
 import shutil
-from subprocess import run, CompletedProcess
-import time
+from builders import (build_zxt_file, build_arc_files)
+from checkers import (chk_files_cache, chk_zip_cache, chk_mra_cache,
+                      chk_or_download_autoboot)
+from utils import chk_or_obtain
 
 __MY_VERSION__ = '1.2.0'
 
 MY_BASEPATH: str = os.path.dirname(sys.argv[0])
 MY_DIRPATH: str = os.path.abspath(MY_BASEPATH)
 
+logging.basicConfig(
+    stream=sys.stdout,
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)-5.5s] - %(name)s: %(message)s')
 LOGGER = logging.getLogger(__name__)
-LOGGER.setLevel(logging.INFO)
-LOG_FORMAT = logging.Formatter(
-    '%(asctime)s [%(levelname)-5.5s] - %(name)s: %(message)s')
-LOG_STREAM = logging.StreamHandler(sys.stdout)
-LOG_STREAM.setFormatter(LOG_FORMAT)
-LOGGER.addHandler(LOG_STREAM)
 
 if sys.version_info < (3, 7, 0):
     LOGGER.error('This software requires Python version 3.7 or greater')
@@ -293,6 +289,9 @@ def parse_args() -> dict[str, Any]:
 
     if arguments.debug:
         LOGGER.setLevel(logging.DEBUG)
+        logging.getLogger('builders').setLevel(logging.DEBUG)
+        logging.getLogger('checkers').setLevel(logging.DEBUG)
+        logging.getLogger('utils').setLevel(logging.DEBUG)
 
     if arguments.clean_sd:
         values['clean_sd'] = arguments.clean_sd
@@ -754,93 +753,6 @@ def build_autoboot(s_dir: str, s_autoboot: str, s_outdir: str) -> bool:
     return True
 
 
-def chk_zip_cache(d_arcade_db: dict[str, Any], d_cores_db: dict[str, Any],
-                  s_roms_path: str, b_force: bool):
-    """
-    Populates ROM ZIP files disk cache
-    :param d_arcade_db: Dict with arcade DB
-    :param d_cores_db: Dict with cores DB
-    :param s_roms_path: Path for the ROM files cache
-    :param b_force: If True, delete (if exists) and download again
-    :return: Nothing
-    """
-
-    d_files: dict[str, Any] = d_arcade_db['files']
-    d_tags: dict[str, Any] = d_arcade_db['tag_dictionary']
-
-    for s_file in d_files:
-        s_name: str = s_file.split('/')[-1]
-        for i_item in d_files[s_file]['tags']:
-            for j_item in d_tags:
-                if d_tags[j_item] == i_item and j_item in d_cores_db:
-                    b_ok: bool = chk_or_obtain(os.path.join(
-                        s_roms_path, s_name),
-                                               d_files[s_file]['hash'],
-                                               d_files[s_file]['size'],
-                                               d_files[s_file]['url'],
-                                               b_force=b_force)
-                    if not b_ok:
-                        print(f'{s_name} Bad file!')
-
-
-def chk_files_cache(d_files_db: dict[str, Any], l_kind: list[str],
-                    l_type: list[str], b_mist: bool, l_tags: list[str],
-                    s_files_path: str, b_force: bool):
-    """
-    Populates files disk cache, checking the existing ones and downloading when
-    needed
-    :param d_files_db: Dict with files DB
-    :param l_kind: List of kind of core files to populate/check (e.g. a200t)
-    :param l_type: List of type of core files (e.g. bit, zx3)
-    :param b_mist: True if mist mode is active
-    :param l_tags: List with tags that apply
-    :param s_files_path: Path for the files cache
-    :param b_force: If True, delete (if exists) and download again
-    :return: Nothing
-    """
-
-    d_files: dict[str, Any] = d_files_db.get('files', {})
-    d_tags: dict[str, Any] = d_files_db.get('tag_dictionary', {})
-
-    if b_mist:
-        l_kind = ['a35t', 'a100t', 'a200t']
-
-    for s_file in d_files:
-        s_name: str = s_file.split('/')[-1]
-
-        b_download: bool = True  # If there are no tags, download always
-        if d_tags:
-            b_download = False
-            s_kind = d_files[s_file].get('kind', '')
-            if s_kind in l_kind and d_files[s_file].get(
-                    'type', None) in l_type:  # Fully tagged
-                b_download = True
-            elif not s_kind:  # Partial tag, download always
-                b_download = True
-
-        if b_download:
-            if d_tags:
-                b_download = False
-                for i_item in d_files[s_file]['tags']:
-                    for j_item in d_tags:
-                        if d_tags[j_item] == i_item and j_item in l_tags:
-                            b_download = True
-
-            if b_download:
-                s_file_path: str = s_files_path
-                l_files_subpath: list[str] = d_files[s_file].get('path', [])
-                if l_files_subpath:
-                    s_file_path = os.path.join(s_file_path,
-                                               os.path.join(*l_files_subpath))
-                b_ok: bool = chk_or_obtain(os.path.join(s_file_path, s_name),
-                                           d_files[s_file]['hash'],
-                                           d_files[s_file]['size'],
-                                           d_files[s_file]['url'],
-                                           b_force=b_force)
-                if not b_ok:
-                    print(f'{s_name} Bad file!')
-
-
 def build_sd_files(d_files_db: dict[str, Any], l_kinds: list[str],
                    l_types: list[str], b_mist: bool, l_tags: list[str],
                    s_files_path: str, s_out_path: str, s_out_subpath: str,
@@ -980,352 +892,6 @@ def build_zxt_sd_files(d_files: dict[str, Any], s_files_path: str,
                 b_ok = True
 
     return b_ok
-
-
-def chk_mra_cache(d_mra_db: dict[str, Any], d_cores_db: dict[str, Any],
-                  s_mras_path: str, b_force: bool,
-                  s_baseurl: str) -> dict[str, Any]:
-    """
-    Populates MRA text files disk cache
-    :param d_mra_db: Dict with MRA DB
-    :param d_cores_db: Dict with cores DB
-    :param s_mras_path: Path for the MRA files cache
-    :param b_force: If True, delete existing files and download again
-    :param s_commit: If not empyt, commit id to use to download the MRA files
-    :return: Dict with MRA groups info
-    """
-
-    d_mras: dict[str, Any] = {}
-    d_files: dict[str, Any] = d_mra_db['files']
-    d_tags: dict[str, Any] = d_mra_db['tag_dictionary']
-    for s_file in d_files:
-        s_name: str = s_file.split('/')[-1]
-        if s_name.endswith('.mra') and not '_alternatives' in s_file:
-            for s_item in d_files[s_file]['tags']:
-                for s_tagitem in d_tags:
-                    if d_tags[s_tagitem] == s_item and ''.join(
-                            s_tagitem.split('arcade')) in d_cores_db:
-                        if not s_tagitem in d_mras:
-                            d_mras[s_tagitem] = []
-                        d_mras[s_tagitem].append(s_name)
-                        s_url: str = s_baseurl + s_name
-                        if 'url' in d_files[s_file]:
-                            s_url = d_files[s_file]['url']
-                        b_ok = chk_or_obtain(os.path.join(s_mras_path, s_name),
-                                             d_files[s_file]['hash'],
-                                             d_files[s_file]['size'],
-                                             s_url,
-                                             b_force=b_force)
-                        if not b_ok:
-                            print(f'{s_name} Bad file!')
-
-    return d_mras
-
-
-def build_zxt_file(bit_files: list[str], zxt_file: str):
-    """
-    Join up to three bit files to a ZXT 
-    :param bit_files: Path to to three bit files [a35, a100, a200]
-    :param zxt_file: New ZXT file to create
-    """
-
-    LOGGER.debug('Join %s into %s...', bit_files, zxt_file)
-
-    b_data: bytes = b'MJ\x01\x00'  # ZXT file begings with these magic bytes
-    b_filedata: bytes = b''  # Temporary storage for .bit files data
-
-    i_offset: int = 512  # First 512 bytes of ZXT are reserved
-    for str_file in bit_files:
-        i_size: int = 0
-        i_padding: int = 0
-        if str_file:
-            i_size = os.stat(str_file).st_size
-            # Calculate padding to 512 bytes
-            i_padding = i_size % 512
-            if i_padding:
-                i_padding = 512 - i_padding
-
-        b_offset: bytes = int(0).to_bytes(4, 'little')  # Offset binary data
-        if i_size:
-            b_offset = i_offset.to_bytes(4, 'little')
-            # LOGGER.debug(i_offset, b_offset)
-            i_offset += i_size + i_padding  # Increase offset with data size
-
-            with open(str_file, 'rb') as in_zxdata:
-                b_tempdata: bytes = in_zxdata.read()
-                b_filedata += b_tempdata  # Store bit data
-                b_filedata += b'\x00' * i_padding  # Pad data to 512 bytes
-        b_data += b_offset  # Store offset
-
-    b_data += b'\x00' * 496  # Pad header with zeros up to 512 bytes
-    b_data += b_filedata  # Store bit binary data
-
-    with open(zxt_file, 'wb') as out_zxdata:
-        out_zxdata.write(b_data)
-        LOGGER.debug('%s created OK.', zxt_file)
-
-
-def build_arc_files(d_mras: dict[str, Any], d_cores_db: dict[str, Any],
-                    s_out_path: str, s_mras_path: str, s_roms_path: str,
-                    s_cache_path: str):
-    """
-    Builds ARC and ROM files from MRA and ROM ZIP files
-    :param d_mras: Dict with MRA groups info
-    :param s_out_path: Base path where the ARC and ROM files are created
-    :param s_mras_path: Path for the MRA files cache
-    :param s_roms_path: Path for the ROM ZIP files cache
-    :param s_cache_path: Path to the main cache (to find the bin)
-    :return: Nothing
-    """
-
-    if not os.path.isdir(s_out_path):
-        pathlib.Path(s_out_path).mkdir(parents=True, exist_ok=True)
-
-    s_mra_bindirpath: str = os.path.join(s_cache_path, 'bin')
-    s_mra_binpath: str = chk_or_download_mrabin(s_mra_bindirpath)
-    if s_mra_binpath != '':
-        for s_mra, l_mra in d_mras.items():
-            s_basename_arc: str = ''.join(s_mra.split('arcade'))
-            s_subdir_arc: str = ''
-            if len(l_mra) > 1:
-                s_subdir_arc: str = ''.join(s_basename_arc.split('jt')).upper()
-
-            for s_submra in l_mra:
-                s_mra_path: str = os.path.join(s_mras_path, s_submra)
-                default_mra: str = d_cores_db[s_basename_arc]['default_mra']
-                l_mra_params: list[str] = []
-
-                s_arc_path: str = s_out_path
-                if s_subdir_arc == '' or (default_mra != '' and
-                                          s_submra.startswith(default_mra)):
-                    s_arc_name: str = ''.join(s_mra.split('arcade')) + '.arc'
-                    if d_cores_db[s_basename_arc]['default_arc'] != '':
-                        s_arc_name = d_cores_db[s_basename_arc][
-                            'default_arc'] + '.arc'
-
-                    l_mra_params = [
-                        s_mra_binpath, '-A', '-z', s_roms_path, '-O',
-                        s_arc_path, '-a',
-                        s_arc_name.upper(), s_mra_path
-                    ]
-                    run_process(l_mra_params, s_submra)
-
-                if s_subdir_arc != '':
-                    s_arc_path = os.path.join(s_arc_path, s_subdir_arc)
-                    if not os.path.isdir(s_arc_path):
-                        pathlib.Path(s_arc_path).mkdir(parents=True,
-                                                       exist_ok=True)
-
-                l_mra_params = [
-                    s_mra_binpath, '-A', '-z', s_roms_path, '-O', s_arc_path,
-                    s_mra_path
-                ]
-                run_process(l_mra_params, s_submra)
-
-
-def chk_or_download_mrabin(s_mrabin_dirpath: str,
-                           b_force: bool = False) -> str:
-    """
-    Download mra binary file if does not exist
-    :param s_mra_dirpath: Path to dir where the file should be
-    :param b_force: If True, delete an existing file and download again
-    :return: String with the full path to the binary file
-    """
-
-    b_ok: bool = True
-
-    s_mra_binname: str = 'mra'
-    s_mra_binurl: str = 'https://github.com/kounch/mra-tools-c/raw/master/release/'
-
-    if sys.platform == 'darwin':
-        s_mra_binurl = urljoin(s_mra_binurl, 'macos/')
-    elif sys.platform == 'win32':
-        s_mra_binurl = urljoin(s_mra_binurl, 'windows/')
-        s_mra_binname = 'mra.exe'
-    else:  # Assume Linux
-        s_mra_binurl = urljoin(s_mra_binurl, 'linux/')
-        if platform.machine() == 'armv7l':
-            s_mra_binname = 'mra.armv7l'
-        elif platform.machine() == 'aarch64':
-            s_mra_binname = 'mra.aarch64'
-
-    s_mra_binpath: str = os.path.join(s_mrabin_dirpath, s_mra_binname)
-    s_mra_binurl = urljoin(s_mra_binurl, s_mra_binname)
-
-    if not os.path.isfile(s_mra_binpath):
-        b_ok = chk_or_obtain(s_mra_binpath,
-                             s_url=s_mra_binurl,
-                             b_force=b_force)
-        time.sleep(15)  # Give Windows some time to check the file
-        if sys.platform != 'win32':
-            run_process(['chmod', 'a+x', s_mra_binpath], 'mra tool binary')
-        if not b_ok:
-            s_mra_binpath = ''
-
-    return s_mra_binpath
-
-
-def chk_or_download_autoboot(s_autobootbin: str,
-                             s_autoboot_path: str,
-                             b_force: bool = False) -> bool:
-    """
-    Download autoboot BAS file if does not exist
-    :param s_autobootbin: File name
-    :param s_autoboot_path: Path to dir where the file should be
-    :param b_force: If True, delete an existing file and download again
-    :return: True if the file exists or is downloaded
-    """
-
-    b_ok: bool = True
-    s_autobootbin_binurl: str = 'https://github.com/kounch/ZX3_Downloader/raw/'
-    s_autobootbin_binurl += '2dc6cdc411c744aa9db20dfbd616bef299770af2/Autoboot/'
-    d_autoboot: dict[str, tuple[str, int]] = {
-        'AUTOBOOT_BIT.BAS': ('58411f0a0c5f48adf6935734ad0ae63b', 337),
-        'AUTOBOOT_CORES.BAS': ('f780a4a6209f700594e9f5c2fbaae42b', 333),
-        'AUTOBOOT_ZX3.BAS': ('10731bb09ec48e11596249c10905b942', 337),
-        'AUTOBOOT_MIST.BAS': ('46e2c93f6479eddc568c5e254a98a8c5', 332)
-    }
-    s_binhash: str = d_autoboot[s_autobootbin][0]
-    i_binsize: int = d_autoboot[s_autobootbin][1]
-
-    s_binpath: str = os.path.join(s_autoboot_path, s_autobootbin)
-    s_binurl: str = urljoin(s_autobootbin_binurl, s_autobootbin)
-
-    if not os.path.isfile(s_binpath):
-        b_ok = chk_or_obtain(s_binpath,
-                             s_url=s_binurl,
-                             s_hash=s_binhash,
-                             i_size=i_binsize,
-                             b_force=b_force)
-    return b_ok
-
-
-def chk_or_obtain(s_fpath: str,
-                  s_hash: str = '',
-                  i_size: int = 0,
-                  s_url: str = '',
-                  s_zip_path: str = '',
-                  s_orig: str = '',
-                  b_force: bool = False) -> bool:
-    """
-    Download a file from a URL or extract a file from inside a ZIP archive if
-    it does not exist and, optionally, check hash and size
-    :param s_fpath: File path of the obtained file
-    :param s_hash: MD5 hash to check
-    :param i_size: Size (bytes) to check
-    :param s_url : Optional URL to download from
-    :param s_zip_path: Path to the ZIP archive file
-    :param s_orig: Path to where the file should be inside the ZIP archive
-    :param b_force: If True, delete an existing file and download again
-    :return: Boolean indicating download or extraction, check, etc. where all ok
-    """
-
-    b_ok: bool = True
-
-    s_name: str = s_fpath.split('/')[-1]
-    s_path: str = os.path.dirname(s_fpath)
-    if not os.path.isdir(s_path):
-        pathlib.Path(s_path).mkdir(parents=True, exist_ok=True)
-
-    if b_force and os.path.isfile(s_fpath):
-        os.remove(s_fpath)
-
-    b_ok = chk_file_hash(s_fpath, s_hash, i_size, s_name)
-    if not b_ok and os.path.isfile(s_fpath):
-        LOGGER.debug('%s wrong hash. Replacing...', s_name)
-        os.remove(s_fpath)
-
-    if not os.path.isfile(s_fpath):
-        if s_url != '':
-            print(f'Downloading {s_name}...')
-            s_turl: str = unquote(s_url, encoding='utf-8', errors='replace')
-            if len(s_turl) == len(s_url):
-                urlparse_t: ParseResult = urlparse(s_url)
-                s_url = urlparse_t.scheme + "://" + urlparse_t.netloc + quote(
-                    urlparse_t.path)
-                if urlparse_t.query != '':
-                    s_url += "?" + quote(urlparse_t.query)
-
-            try:
-                urllib.request.urlretrieve(s_url, s_fpath)
-            except HTTPError as error:
-                LOGGER.debug('Cannot fetch %s! %s', s_url, error)
-            except URLError as error:
-                LOGGER.error('Connection error: %s! %s', s_url, error)
-                b_ok = False
-        elif s_zip_path != '':
-            LOGGER.debug('Extracting %s...', s_orig)
-            with ZipFile(s_zip_path, "r") as z_handle:
-                with z_handle.open(s_orig) as member:
-                    with open(s_fpath, 'wb') as outfile:
-                        shutil.copyfileobj(member, outfile)
-                    b_ok = True
-        else:
-            LOGGER.error('%s not found!', s_name)
-            b_ok = False
-
-    b_ok = chk_file_hash(s_fpath, s_hash, i_size, s_name)
-    if not b_ok:
-        LOGGER.error('Could not obtain file: %s!', s_name)
-
-    return b_ok
-
-
-def chk_file_hash(s_fpath: str, s_hash: str, i_size: int, s_name: str) -> bool:
-    """
-    Check file hash and size if it exists
-    :param s_fpath: File path of the obtained file
-    :param s_hash: MD5 hash to check
-    :param i_size: Size (bytes) to check
-    :param s_name: Text to show filename on errors and logs
-    :return: True if file exists, hash and size are correct
-    """
-    b_ok: bool = True
-    if os.path.isfile(s_fpath):
-        if s_hash != '' and i_size != 0:
-            i_fsize: int = os.stat(s_fpath).st_size
-            LOGGER.debug('%s obtained, checking...', s_name)
-            s_hashcheck: str = get_file_hash(s_fpath)
-            if s_hash != s_hashcheck or i_fsize != i_size:
-                LOGGER.debug('%s wrong file!', s_name)
-                b_ok = False
-    else:
-        b_ok = False
-
-    return b_ok
-
-
-def get_file_hash(str_in_file: str) -> str:
-    """
-    Get file md5 hash
-    :param str_in_file: Path to file
-    :return: String with hash data
-    """
-    md5_hash: object = hashlib.md5()
-    with open(str_in_file, "rb") as f_data:
-        # Read and update hash string value in blocks of 4K
-        for byte_block in iter(lambda: f_data.read(4096), b""):
-            md5_hash.update(byte_block)
-
-    return md5_hash.hexdigest()
-
-
-def run_process(l_mra_params: list[str], s_item: str):
-    """
-    Runs a process, printing stdout, and logging an errir if stderr not empty
-    :param l_mra_params: list of command line command and parameters
-    :param s_item: Text to show as element in error if stderr not empty
-    :return: Nothing
-    """
-
-    mra_process: CompletedProcess[Any] = run(l_mra_params,
-                                             capture_output=True,
-                                             check=False,
-                                             encoding='utf8')
-    if mra_process.stdout != '':
-        LOGGER.debug(mra_process.stdout)
-    if mra_process.stderr != '':
-        LOGGER.error('Problem processing %s: %s', s_item, mra_process.stderr)
 
 
 if __name__ == "__main__":
