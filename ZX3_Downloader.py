@@ -17,16 +17,13 @@ import sys
 import argparse
 import pathlib
 import os
-import json
 import ssl
-from zipfile import ZipFile, is_zipfile
-from urllib.parse import urljoin
 import socket
 import shutil
 from builders import (build_zxt_file, build_arc_files)
 from checkers import (chk_files_cache, chk_zip_cache, chk_mra_cache,
                       chk_or_download_autoboot)
-from utils import chk_or_obtain
+from utils import load_db, chk_or_obtain
 
 __MY_VERSION__ = '1.1.0'
 
@@ -394,57 +391,6 @@ def parse_args() -> dict[str, Any]:
     return values
 
 
-def load_db(s_dirpath: str,
-            s_name: str,
-            s_urlbase: str = '',
-            s_hash: str = '',
-            i_size: int = 0,
-            b_force: bool = False) -> dict[str, Any]:
-    """
-    Loads Database from JSON or from JSON inside ZIP file
-    :param s_dirpath: Directory where the file should be
-    :param s_name: JSON file name
-    :param s_urlbase: Base URL to compose the path to download
-    :param s_hash: Hash of ZIP file
-    :param i_size: Size of ZIP file
-    :param b_force: If True, delete an existing file and download again
-    :return: Dictionary with data
-    """
-
-    s_zipname: str = s_name + '.zip'
-    s_dirpath = os.path.join(s_dirpath, 'db')
-    s_json: str = os.path.join(s_dirpath, s_name)
-    s_jsonzip: str = os.path.join(s_dirpath, s_zipname)
-
-    if b_force and os.path.isfile(s_jsonzip):
-        os.remove(s_jsonzip)
-
-    if not os.path.isfile(s_json):
-        b_ok: bool = chk_or_obtain(s_jsonzip, s_hash, i_size,
-                                   urljoin(s_urlbase, s_zipname))
-        if not b_ok:
-            print(f'{s_name} Bad file!')
-
-    d_result: dict[str, Any] = {}
-    if os.path.isfile(s_json):
-        with open(s_json, 'r', encoding='utf-8') as json_handle:
-            LOGGER.debug('Loading database...')
-            d_result = json.load(json_handle)
-    elif is_zipfile(s_jsonzip):
-        with ZipFile(s_jsonzip, "r") as z_handle:
-            for s_filename in z_handle.namelist():
-                if s_filename == s_name:
-                    LOGGER.debug('Loading Arcade DB %s...', s_jsonzip)
-                    with z_handle.open(s_filename) as json_handle:
-                        json_data: bytes = json_handle.read()
-                        d_result = json.loads(json_data.decode("utf-8"))
-                    break
-    else:
-        print(f'{s_name} Not found or not in a ZIP file!')
-
-    return d_result
-
-
 def build_sd_zip_fromdb(s_dir: str, d_db_params: dict[str, Any],
                         d_params: dict[str, Any]) -> bool:
     """
@@ -659,10 +605,10 @@ def build_zxt_sd_fromzip(d_zip_files: dict[str, Any], s_zip_path: str,
                                                 s_orig=s_orig)
                     if b_tok:
                         arr_tmp.append(s_dest)
+
+                b_ok = False
                 if len(arr_tmp) == 3:
-                    build_zxt_file(arr_tmp, s_sdpath)
-                else:
-                    b_ok = False
+                    b_ok = build_zxt_file(arr_tmp, s_sdpath)
 
                 for s_orig in arr_bitfiles:
                     s_dest = f'{s_sdpath}_{s_orig}_tmp'
@@ -888,8 +834,7 @@ def build_zxt_sd_files(d_files: dict[str, Any], s_files_path: str,
                 if not os.path.isdir(s_sdpath):
                     pathlib.Path(s_sdpath).mkdir(parents=True, exist_ok=True)
                 s_sdpath: str = os.path.join(s_sdpath, f'{s_name}.zxt')
-                build_zxt_file(arr_bitfiles, s_sdpath)
-                b_ok = True
+                b_ok = build_zxt_file(arr_bitfiles, s_sdpath)
 
     return b_ok
 

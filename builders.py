@@ -20,7 +20,7 @@ from utils import run_process
 LOGGER = logging.getLogger(__name__)
 
 
-def build_zxt_file(bit_files: list[str], zxt_file: str):
+def build_zxt_file(bit_files: list[str], zxt_file: str) -> bool:
     """
     Join up to three bit files to a ZXT 
     :param bit_files: Path to to three bit files [a35, a100, a200]
@@ -29,6 +29,7 @@ def build_zxt_file(bit_files: list[str], zxt_file: str):
 
     LOGGER.debug('Join %s into %s...', bit_files, zxt_file)
 
+    b_ok = False
     b_data: bytes = b'MJ\x01\x00'  # ZXT file begings with these magic bytes
     b_filedata: bytes = b''  # Temporary storage for .bit files data
 
@@ -46,13 +47,14 @@ def build_zxt_file(bit_files: list[str], zxt_file: str):
         b_offset: bytes = int(0).to_bytes(4, 'little')  # Offset binary data
         if i_size:
             b_offset = i_offset.to_bytes(4, 'little')
-            # LOGGER.debug(i_offset, b_offset)
+            # LOGGER.debug('%s: %i (%s)', str_file, i_offset, b_offset.hex())
             i_offset += i_size + i_padding  # Increase offset with data size
 
             with open(str_file, 'rb') as in_zxdata:
                 b_tempdata: bytes = in_zxdata.read()
+                b_tempdata += b'\xff' * i_padding  # Pad data to 512 bytes
                 b_filedata += b_tempdata  # Store bit data
-                b_filedata += b'\x00' * i_padding  # Pad data to 512 bytes
+
         b_data += b_offset  # Store offset
 
     b_data += b'\x00' * 496  # Pad header with zeros up to 512 bytes
@@ -60,7 +62,10 @@ def build_zxt_file(bit_files: list[str], zxt_file: str):
 
     with open(zxt_file, 'wb') as out_zxdata:
         out_zxdata.write(b_data)
+        b_ok = True
         LOGGER.debug('%s created OK.', zxt_file)
+
+    return b_ok
 
 
 def build_arc_files(d_mras: dict[str, Any], d_cores_db: dict[str, Any],

@@ -13,8 +13,10 @@ from __future__ import annotations
 from typing import Any
 import pathlib
 import os
+import json
+from zipfile import ZipFile, is_zipfile
+from urllib.parse import urljoin
 import hashlib
-from zipfile import ZipFile
 import urllib.request
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse, quote, unquote, ParseResult
@@ -23,6 +25,57 @@ from subprocess import run, CompletedProcess
 import logging
 
 LOGGER = logging.getLogger(__name__)
+
+
+def load_db(s_dirpath: str,
+            s_name: str,
+            s_urlbase: str = '',
+            s_hash: str = '',
+            i_size: int = 0,
+            b_force: bool = False) -> dict[str, Any]:
+    """
+    Loads Database from JSON or from JSON inside ZIP file
+    :param s_dirpath: Directory where the file should be
+    :param s_name: JSON file name
+    :param s_urlbase: Base URL to compose the path to download
+    :param s_hash: Hash of ZIP file
+    :param i_size: Size of ZIP file
+    :param b_force: If True, delete an existing file and download again
+    :return: Dictionary with data
+    """
+
+    s_zipname: str = s_name + '.zip'
+    s_dirpath = os.path.join(s_dirpath, 'db')
+    s_json: str = os.path.join(s_dirpath, s_name)
+    s_jsonzip: str = os.path.join(s_dirpath, s_zipname)
+
+    if b_force and os.path.isfile(s_jsonzip):
+        os.remove(s_jsonzip)
+
+    if not os.path.isfile(s_json):
+        b_ok: bool = chk_or_obtain(s_jsonzip, s_hash, i_size,
+                                   urljoin(s_urlbase, s_zipname))
+        if not b_ok:
+            print(f'{s_name} Bad file!')
+
+    d_result: dict[str, Any] = {}
+    if os.path.isfile(s_json):
+        with open(s_json, 'r', encoding='utf-8') as json_handle:
+            LOGGER.debug('Loading database...')
+            d_result = json.load(json_handle)
+    elif is_zipfile(s_jsonzip):
+        with ZipFile(s_jsonzip, "r") as z_handle:
+            for s_filename in z_handle.namelist():
+                if s_filename == s_name:
+                    LOGGER.debug('Loading Arcade DB %s...', s_jsonzip)
+                    with z_handle.open(s_filename) as json_handle:
+                        json_data: bytes = json_handle.read()
+                        d_result = json.loads(json_data.decode("utf-8"))
+                    break
+    else:
+        print(f'{s_name} Not found or not in a ZIP file!')
+
+    return d_result
 
 
 def chk_or_obtain(s_fpath: str,
