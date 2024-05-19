@@ -20,12 +20,12 @@ import os
 import ssl
 import socket
 import shutil
-from builders import (build_zxt_file, build_arc_files)
+from utils import load_db, chk_or_obtain
 from checkers import (chk_files_cache, chk_zip_cache, chk_mra_cache,
                       chk_or_download_autoboot)
-from utils import load_db, chk_or_obtain
+from builders import (build_zxt_file, build_arc_files)
 
-__MY_VERSION__ = '1.1.0'
+__MY_VERSION__ = '1.1.1'
 
 MY_BASEPATH: str = os.path.dirname(sys.argv[0])
 MY_DIRPATH: str = os.path.abspath(MY_BASEPATH)

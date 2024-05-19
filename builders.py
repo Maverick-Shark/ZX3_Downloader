@@ -14,8 +14,8 @@ from typing import Any
 import pathlib
 import os
 import logging
-from checkers import chk_or_download_mrabin
 from utils import run_process
+from checkers import chk_or_download_mrabin
 
 LOGGER = logging.getLogger(__name__)
 
